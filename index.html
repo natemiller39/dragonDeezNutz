@@ -312,7 +312,7 @@ function danger(x){ return Math.min(1, Math.max(0, (x-1800)/18000)); }
 function weightOf(t,x){
   const d=danger(x);
   const z=zoneAt(x);
-  if(t.k==='vulture') return x<5000 ? 0 : 5+15*d;   // vultures show up after ~250 m
+  if(t.k==='vulture') return 0;                      // vultures (and their snow hawk / fire bat looks) are switched off
   if(t.k==='drift')  return z===1 ? 14+8*d : 0;      // snowdrifts only in the Frozen Wastes
   if(t.k==='geyser') return z===2 ? 15+8*d : 0;      // fire geysers only in the Molten Core
   return t.good ? t.w*(1-0.3*d) : t.w*(1+1.2*d);    // fewer boosts, more traps the farther you go
