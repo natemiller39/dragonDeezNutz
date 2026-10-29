@@ -2,7 +2,9 @@
 
 A cannon-launch game: fire a dragon hauling a sack of nuts across the desert and see how far it goes.
 
-**Play:** https://natemiller39.github.io/dragondeeznutz/
+**Play (with leaderboard):** https://dragondeeznuts.onrender.com
+
+**Play (no leaderboard):** https://natemiller39.github.io/dragondeeznutz/
 
 ## How to play
 
@@ -14,4 +16,9 @@ A cannon-launch game: fire a dragon hauling a sack of nuts across the desert and
 
 Score is meters traveled plus squish points. Your best score is saved in your browser.
 
-Everything lives in a single `index.html` with no build step.
+## Running it
+
+The game is a single `index.html`. `server.js` serves it on Render and adds a shared leaderboard at `/api/scores`, stored in Postgres.
+
+- `npm install` then `npm start`
+- Set `DATABASE_URL` to a Postgres connection string. The server creates its `dragon_scores` table on startup. Without it, the game still runs and the leaderboard stays hidden.

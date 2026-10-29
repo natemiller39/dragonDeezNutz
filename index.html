@@ -54,15 +54,30 @@ canvas{display:block;width:100%;height:100%;cursor:pointer}
 .turbo:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 @media (prefers-reduced-motion:no-preference){.turbo{animation:wiggle .6s ease-in-out infinite}}
 @keyframes wiggle{50%{transform:translateX(-50%) scale(1.07)}}
-.card{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);width:min(340px, calc(100% - 32px));
-  background:var(--panel);border-radius:18px;padding:18px 20px;text-align:center;pointer-events:none;
+.card{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(360px, calc(100% - 32px));
+  max-height:calc(100% - 120px);overflow-y:auto;overscroll-behavior:contain;
+  background:var(--panel);border-radius:18px;padding:18px 20px;text-align:center;pointer-events:auto;cursor:pointer;
   display:flex;flex-direction:column;gap:8px;backdrop-filter:blur(4px)}
-.face{width:96px;height:96px;border-radius:50%;object-fit:cover;align-self:center;border:4px solid var(--ink);box-shadow:0 6px 0 rgba(0,0,0,.3);margin-top:-62px}
+.face{width:96px;height:96px;border-radius:50%;object-fit:cover;align-self:center;border:4px solid var(--ink);box-shadow:0 6px 0 rgba(0,0,0,.3)}
 .face.rec{border-color:#ffd45c}
 @media (prefers-reduced-motion:no-preference){.face{animation:popin .5s cubic-bezier(.2,1.6,.4,1)}}
 @keyframes popin{from{transform:scale(0) rotate(-25deg)}}
 .card h1{font-family:var(--display);font-weight:400;font-size:clamp(24px,7vw,34px);margin:0;line-height:1.05;text-wrap:balance;color:var(--ink)}
 .card p{margin:0;font-size:15px;line-height:1.45;color:var(--ink-dim)}
+.post{display:flex;gap:6px;margin-top:4px}
+.post input{flex:1 1 auto;min-width:0;font:inherit;font-weight:800;font-size:16px;color:#241b2e;background:var(--ink);border:0;border-radius:10px;padding:10px 12px}
+.post button{font-family:var(--display);font-size:14px;border:0;border-radius:10px;padding:10px 14px;background:var(--accent);color:var(--ink);cursor:pointer;box-shadow:0 3px 0 #a3232d}
+.post button:disabled{opacity:.5}
+.post input:focus-visible,.post button:focus-visible{outline:3px solid #ffd45c;outline-offset:2px}
+.card .postMsg{color:#ffd45c;font-weight:800;font-size:14px}
+.board{display:flex;flex-direction:column;gap:6px;text-align:left;margin-top:4px;cursor:default}
+.board ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.board li{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:8px;align-items:center;padding:5px 8px;border-radius:8px;font-variant-numeric:tabular-nums;font-size:14px}
+.board li.me{background:rgba(255,212,92,.2)}
+.board .rk{font-family:var(--display);color:var(--ink-dim);font-size:13px}
+.board li:first-child .rk{color:#ffd45c}
+.board .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800;color:var(--ink)}
+.board .pt{font-family:var(--display);font-size:13px;color:var(--ink)}
 .card .tap{font-family:var(--display);font-size:15px;color:var(--accent);letter-spacing:.04em;margin-top:4px}
 .card .record{font-family:var(--display);color:#ffd45c;font-size:14px}
 @media (prefers-reduced-motion:no-preference){.card .tap{animation:pulse 1.2s ease-in-out infinite}}
@@ -89,10 +104,19 @@ canvas{display:block;width:100%;height:100%;cursor:pointer}
     <img id="cardFace" class="face" alt="" hidden>
     <h1 id="cardTitle">Dragon Deez Nuts</h1>
     <p id="cardText">Tap once to lock the angle, tap again to lock the power. In the air, hold to fire your jetpack. Run it dry and it needs to cool down.</p>
-    <p>Land on critters to squish them: small 50, medium 100, big 200. Chain squishes without touching the ground for bigger combos. Bounce 3 times without hitting anything to charge Turbo.</p>
+    <p id="cardHelp">Land on critters to squish them: small 50, medium 100, big 200. Chain squishes without touching the ground for bigger combos. Bounce 3 times without hitting anything to charge Turbo.</p>
     <p id="cardLegend">Springs, boom barrels and balloons send you farther. Cactuses and tar pits end the run.</p>
     <span class="record" id="record" hidden>New record!</span>
+    <form class="post" id="postForm" hidden>
+      <input id="pname" maxlength="20" placeholder="Your name" autocomplete="nickname" aria-label="Your name for the leaderboard">
+      <button type="submit" id="postBtn">Post score</button>
+    </form>
+    <p class="postMsg" id="postMsg" hidden></p>
     <span class="tap" id="cardTap">Tap to start</span>
+    <div class="board" id="board" hidden>
+      <span class="label">Leaderboard</span>
+      <ol id="boardList"></ol>
+    </div>
   </div>
 </div>
 
@@ -155,11 +179,58 @@ function showCard(title,text,legend,tap,record){
   $('cardTitle').textContent=title; $('cardText').textContent=text;
   $('cardLegend').hidden=!legend; if(legend) $('cardLegend').textContent=legend;
   $('cardTap').textContent=tap; $('record').hidden=!record; card.hidden=false;
+  $('cardHelp').hidden = state==='done';
 }
+
+// ---------- leaderboard ----------
+const API='/api/scores';
+let lastRun=null, myId=null;
+function boardRow(r,i){
+  const li=document.createElement('li'); if(r.id===myId) li.className='me';
+  const rk=document.createElement('span'); rk.className='rk'; rk.textContent=i+1;
+  const nm=document.createElement('span'); nm.className='nm'; nm.textContent=r.name;
+  const pt=document.createElement('span'); pt.className='pt'; pt.textContent=r.score;
+  li.append(rk,nm,pt); return li;
+}
+async function loadBoard(){
+  try{
+    const r=await fetch(API,{cache:'no-store'}); if(!r.ok) throw new Error();
+    const rows=await r.json();
+    const list=$('boardList');
+    if(!rows.length){ const li=document.createElement('li'); li.textContent='No scores yet. Be the first!'; list.replaceChildren(li); }
+    else list.replaceChildren(...rows.map(boardRow));
+    $('board').hidden=false; return true;
+  }catch(e){ $('board').hidden=true; return false; }
+}
+function postMsg(t){ const m=$('postMsg'); m.textContent=t; m.hidden=!t; }
+async function offerPost(run){
+  lastRun=run; myId=null; postMsg('');
+  const ok=await loadBoard();
+  if(!ok || state!=='done' || lastRun!==run || run.score<=0){ $('postForm').hidden=true; return; }
+  try{ $('pname').value=localStorage.getItem('hh-name')||''; }catch(e){}
+  $('postBtn').disabled=false; $('postForm').hidden=false;
+}
+$('postForm').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const name=$('pname').value.trim();
+  if(!name){ postMsg('Enter a name first.'); $('pname').focus(); return; }
+  if(!lastRun) return;
+  try{ localStorage.setItem('hh-name',name); }catch(e){}
+  $('postBtn').disabled=true; postMsg('Posting…');
+  try{
+    const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,...lastRun})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error||'Could not post your score. Try again.');
+    myId=j.id; $('postForm').hidden=true;
+    postMsg(j.rank<=10 ? `Posted! You're #${j.rank} on the leaderboard.` : `Posted! You're #${j.rank}. Top 10 needs more nuts.`);
+    loadBoard();
+  }catch(err){ postMsg(err.message); $('postBtn').disabled=false; }
+});
+card.addEventListener('pointerdown', e=>{ if(e.target.closest('form,.board,.postMsg')) return; e.preventDefault(); act(); });
 
 // ---------- input ----------
 function act(){
-  if(state==='title'||state==='done'){ reset(); state='aim'; card.hidden=true; $('cardFace').hidden=true; return; }
+  if(state==='title'||state==='done'){ reset(); state='aim'; card.hidden=true; $('cardFace').hidden=true; $('postForm').hidden=true; postMsg(''); return; }
   if(state==='aim'){ state='power'; return; }
   if(state==='power'){ fire(); return; }
 }
@@ -168,6 +239,7 @@ cv.addEventListener('pointerdown', e=>{ e.preventDefault(); if(state==='fly') je
 window.addEventListener('blur',()=>{ jetHold=false; });
 window.addEventListener('keyup', e=>{ if(e.code==='Space'||e.code==='Enter') jetHold=false; });
 window.addEventListener('keydown', e=>{
+  if(e.target && e.target.closest && e.target.closest('input,button')) return;
   if(e.code==='Space'||e.code==='Enter'){ if(e.target===turboBtn) return; e.preventDefault();
     if(state==='fly') jetHold=true; else if(!e.repeat) act(); }
   if(e.code==='KeyT'){ e.preventDefault(); fireTurbo(); }
@@ -338,6 +410,7 @@ function finish(){
   img.src=FACE_SRC[fi]; img.classList.toggle('rec',rec); img.hidden=false;
   img.style.animation='none'; void img.offsetWidth; img.style.animation='';
   showCard(sc+' pts', d.toFixed(1)+' m + '+squishPts+' squish points. '+how+' '+quips[Math.floor(Math.random()*quips.length)], null, 'Tap to launch again', rec);
+  offerPost({score:sc, distance:Math.round(d*10)/10, squished:squishN});
 }
 
 // ---------- drawing ----------
@@ -536,6 +609,7 @@ function loop(now){
   update(dt); draw(); requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
+loadBoard();
 })();
 </script>
 
