@@ -38,7 +38,6 @@ html,body{height:100%}
 body{background:var(--sky-top);color:var(--ink);font-family:var(--body);overflow:hidden;touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
 canvas{touch-action:none}
 .post input{-webkit-user-select:text;user-select:text}
-.card .install{color:#ffd45c;font-weight:800;font-size:14px}
 #stage{position:relative;height:100%;width:100%}
 canvas{display:block;width:100%;height:100%;cursor:pointer}
 .hud{position:absolute;top:10px;left:0;right:0;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;
@@ -117,7 +116,6 @@ canvas{display:block;width:100%;height:100%;cursor:pointer}
     <h1 id="cardTitle">Dragon Deez Nuts</h1>
     <p id="cardText">Tap once to lock the angle, tap again to lock the power. In the air, hold to fire your jetpack. Run it dry and it needs to cool down.</p>
     <p id="cardHelp">Every critter you squish goes in the sack, and the sack grows. Land on critters to squish them: small 50, medium 100, big 200. Chain squishes without touching the ground for bigger combos. Bounce 3 times without hitting anything to charge Turbo.</p>
-    <p class="install" id="installTip" hidden>On iPhone: tap the Share button, then <b>Add to Home Screen</b> to play full screen like an app.</p>
     <p id="cardLegend">Springs, boom barrels and balloons send you farther. Cactuses and tar pits end the run.</p>
     <span class="record" id="record" hidden>New record!</span>
     <form class="post" id="postForm" hidden>
@@ -194,7 +192,6 @@ function showCard(title,text,legend,tap,record){
   $('cardLegend').hidden=!legend; if(legend) $('cardLegend').textContent=legend;
   $('cardTap').textContent=tap; $('record').hidden=!record; card.hidden=false;
   $('cardHelp').hidden = state==='done';
-  if(state==='done') $('installTip').hidden=true;
 }
 
 // ---------- leaderboard ----------
@@ -639,12 +636,6 @@ function loop(now){
 }
 requestAnimationFrame(loop);
 loadBoard();
-// Suggest installing when opened in iPhone Safari (not already running from the Home Screen)
-try{
-  const ios=/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
-  const standalone=window.navigator.standalone===true || matchMedia('(display-mode: standalone)').matches;
-  if(ios && !standalone) $('installTip').hidden=false;
-}catch(e){}
 document.addEventListener('gesturestart',e=>e.preventDefault());
 document.addEventListener('dblclick',e=>e.preventDefault());
 })();
