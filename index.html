@@ -403,7 +403,7 @@ function update(dt){
   const tx = state==='fly'||state==='done' ? h.x - (W*0.18)/s : -120;
   camX += (tx-camX)*Math.min(1,dt*10);
   if(shake>0) shake=Math.max(0,shake-dt);
-  const topRoom = (H*0.55)/s;
+  const topRoom = (H*0.42)/s;
   const ty = Math.max(0, h.y - topRoom);
   camY += (ty-camY)*Math.min(1,dt*6);
   spawn(); spawnCrit();
@@ -438,7 +438,7 @@ function finish(){
 }
 
 // ---------- drawing ----------
-const gy = () => H*0.8;
+const gy = () => H*0.64;
 const SX = x => (x-camX)*s;
 const SY = y => gy() - (y-camY)*s;
 
