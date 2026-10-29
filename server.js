@@ -38,6 +38,10 @@ function pgStore() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )`);
       await pool.query('CREATE INDEX IF NOT EXISTS dragon_scores_score_idx ON dragon_scores (score DESC)');
+      // One entry per name: keep each name's best score, then enforce it.
+      await pool.query(`DELETE FROM dragon_scores d USING dragon_scores k
+        WHERE lower(d.name) = lower(k.name) AND (d.score < k.score OR (d.score = k.score AND d.id > k.id))`);
+      await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS dragon_scores_name_idx ON dragon_scores (lower(name))');
     },
     async top() {
       const { rows } = await pool.query(
@@ -46,12 +50,23 @@ function pgStore() {
       return rows;
     },
     async add(e) {
+      const prev = await pool.query('SELECT id, score FROM dragon_scores WHERE lower(name) = lower($1)', [e.name]);
+      const old = prev.rows[0];
+      if (old && e.score <= old.score) {
+        const r = await pool.query('SELECT COUNT(*)::int + 1 AS rank FROM dragon_scores WHERE score > $1', [old.score]);
+        return { id: old.id, rank: r.rows[0].rank, improved: false, best: old.score };
+      }
       const { rows } = await pool.query(
-        'INSERT INTO dragon_scores (name, score, distance, squished) VALUES ($1, $2, $3, $4) RETURNING id',
+        `INSERT INTO dragon_scores (name, score, distance, squished) VALUES ($1, $2, $3, $4)
+         ON CONFLICT ((lower(name))) DO UPDATE
+           SET name = EXCLUDED.name, score = EXCLUDED.score, distance = EXCLUDED.distance,
+               squished = EXCLUDED.squished, created_at = now()
+           WHERE dragon_scores.score < EXCLUDED.score
+         RETURNING id`,
         [e.name, e.score, e.distance, e.squished]
       );
       const r = await pool.query('SELECT COUNT(*)::int + 1 AS rank FROM dragon_scores WHERE score > $1', [e.score]);
-      return { id: rows[0].id, rank: r.rows[0].rank };
+      return { id: rows[0] ? rows[0].id : old.id, rank: r.rows[0].rank, improved: true, best: e.score, previous: old ? old.score : null };
     },
   };
 }
@@ -66,19 +81,39 @@ function redisStore() {
       console.log('Key Value host', host, err ? 'lookup failed: ' + err.code : 'resolves to ' + JSON.stringify(addrs)));
   } catch (e) {}
   client.on('error', e => console.error('Key Value error:', e.message));
-  const KEY = 'dds:scores', SEQ = 'dds:seq';
+  const KEY = 'dds:scores', SEQ = 'dds:seq', NAMES = 'dds:names';
+  const nameKey = n => n.toLowerCase();
   return {
-    async init() { if (!client.isOpen) await client.connect(); },
+    async init() {
+      if (!client.isOpen) await client.connect();
+      // One entry per name: keep each name's best score, drop the rest.
+      const all = await client.zRangeWithScores(KEY, 0, -1, { REV: true });
+      const seen = new Set();
+      for (const r of all) {
+        const k = nameKey(JSON.parse(r.value).name);
+        if (seen.has(k)) await client.zRem(KEY, r.value);
+        else { seen.add(k); await client.hSet(NAMES, k, r.value); }
+      }
+    },
     async top() {
       const rows = await client.zRangeWithScores(KEY, 0, 9, { REV: true });
       return rows.map(r => ({ ...JSON.parse(r.value), score: r.score }));
     },
     async add(e) {
+      const k = nameKey(e.name);
+      const prevMember = await client.hGet(NAMES, k);
+      const prevScore = prevMember == null ? null : await client.zScore(KEY, prevMember);
+      if (prevScore != null && e.score <= prevScore) {
+        const above = await client.zCount(KEY, '(' + prevScore, '+inf');
+        return { id: JSON.parse(prevMember).id, rank: above + 1, improved: false, best: prevScore };
+      }
       const id = await client.incr(SEQ);
       const member = JSON.stringify({ id, name: e.name, distance: e.distance, squished: e.squished, t: Date.now() });
+      if (prevMember != null) await client.zRem(KEY, prevMember);
       await client.zAdd(KEY, { score: e.score, value: member });
+      await client.hSet(NAMES, k, member);
       const above = await client.zCount(KEY, '(' + e.score, '+inf');
-      return { id, rank: above + 1 };
+      return { id, rank: above + 1, improved: true, best: e.score, previous: prevScore };
     },
   };
 }

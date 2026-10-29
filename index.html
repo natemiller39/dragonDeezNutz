@@ -236,7 +236,9 @@ $('postForm').addEventListener('submit', async e=>{
     const j=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(j.error||'Could not post your score. Try again.');
     myId=j.id; $('postForm').hidden=true;
-    postMsg(j.rank<=10 ? `Posted! You're #${j.rank} on the leaderboard.` : `Posted! You're #${j.rank}. Top 10 needs more nuts.`);
+    if(j.improved===false) postMsg(`${name} already has ${j.best} on the leaderboard (#${j.rank}). Beat it to update.`);
+    else if(j.previous!=null) postMsg(`New best for ${name}! Up from ${j.previous}. You're #${j.rank}.`);
+    else postMsg(j.rank<=10 ? `Posted! You're #${j.rank} on the leaderboard.` : `Posted! You're #${j.rank}. Top 10 needs more nuts.`);
     loadBoard();
   }catch(err){ postMsg(err.message); $('postBtn').disabled=false; }
 });
