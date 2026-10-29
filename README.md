@@ -18,7 +18,7 @@ Score is meters traveled plus squish points. Your best score is saved in your br
 
 ## Running it
 
-The game is a single `index.html`. `server.js` serves it on Render and adds a shared leaderboard at `/api/scores`, stored in Postgres.
+The game is a single `index.html`. `server.js` serves it on Render and adds a shared leaderboard at `/api/scores`, stored in Postgres or a Render Key Value store.
 
 - `npm install` then `npm start`
-- Set `DATABASE_URL` to a Postgres connection string. The server creates its `dragon_scores` table on startup. Without it, the game still runs and the leaderboard stays hidden.
+- Set `DATABASE_URL` (Postgres) or `REDIS_URL` (Key Value). With Postgres the server creates its `dragon_scores` table on startup. With neither, the game still runs and the leaderboard stays hidden.

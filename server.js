@@ -2,7 +2,6 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { Pool } = require('pg');
 
 const PORT = process.env.PORT || 3000;
 const DB_URL = process.env.DATABASE_URL || '';
@@ -15,32 +14,82 @@ const STATIC = {
   '/icon-512.png': 'image/png',
 };
 
-const pool = DB_URL
-  ? new Pool({
-      connectionString: DB_URL,
-      // Render's external URLs need SSL; internal ones do not.
-      ssl: /\.render\.com/.test(DB_URL) ? { rejectUnauthorized: false } : false,
-      max: 4,
-    })
-  : null;
+const REDIS_URL = process.env.REDIS_URL || '';
+
+// Scores live in Postgres (DATABASE_URL) or a Render Key Value store (REDIS_URL).
+let store = null;
+
+function pgStore() {
+  const { Pool } = require('pg');
+  const pool = new Pool({
+    connectionString: DB_URL,
+    // Render's external URLs need SSL; internal ones do not.
+    ssl: /\.render\.com/.test(DB_URL) ? { rejectUnauthorized: false } : false,
+    max: 4,
+  });
+  return {
+    async init() {
+      await pool.query(`CREATE TABLE IF NOT EXISTS dragon_scores (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        score INTEGER NOT NULL,
+        distance REAL NOT NULL DEFAULT 0,
+        squished INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`);
+      await pool.query('CREATE INDEX IF NOT EXISTS dragon_scores_score_idx ON dragon_scores (score DESC)');
+    },
+    async top() {
+      const { rows } = await pool.query(
+        'SELECT id, name, score, distance, squished FROM dragon_scores ORDER BY score DESC, created_at ASC LIMIT 10'
+      );
+      return rows;
+    },
+    async add(e) {
+      const { rows } = await pool.query(
+        'INSERT INTO dragon_scores (name, score, distance, squished) VALUES ($1, $2, $3, $4) RETURNING id',
+        [e.name, e.score, e.distance, e.squished]
+      );
+      const r = await pool.query('SELECT COUNT(*)::int + 1 AS rank FROM dragon_scores WHERE score > $1', [e.score]);
+      return { id: rows[0].id, rank: r.rows[0].rank };
+    },
+  };
+}
+
+function redisStore() {
+  const { createClient } = require('redis');
+  const client = createClient({ url: REDIS_URL });
+  client.on('error', e => console.error('Key Value error:', e.message));
+  const KEY = 'dds:scores', SEQ = 'dds:seq';
+  return {
+    async init() { if (!client.isOpen) await client.connect(); },
+    async top() {
+      const rows = await client.zRangeWithScores(KEY, 0, 9, { REV: true });
+      return rows.map(r => ({ ...JSON.parse(r.value), score: r.score }));
+    },
+    async add(e) {
+      const id = await client.incr(SEQ);
+      const member = JSON.stringify({ id, name: e.name, distance: e.distance, squished: e.squished, t: Date.now() });
+      await client.zAdd(KEY, { score: e.score, value: member });
+      const above = await client.zCount(KEY, '(' + e.score, '+inf');
+      return { id, rank: above + 1 };
+    },
+  };
+}
 
 let dbReady = false;
 async function initDb() {
-  if (!pool) { console.log('DATABASE_URL not set: leaderboard disabled'); return; }
+  if (!store) {
+    if (DB_URL) store = pgStore();
+    else if (REDIS_URL) store = redisStore();
+    else { console.log('No DATABASE_URL or REDIS_URL set: leaderboard disabled'); return; }
+  }
   try {
-    await pool.query(`CREATE TABLE IF NOT EXISTS dragon_scores (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      score INTEGER NOT NULL,
-      distance REAL NOT NULL DEFAULT 0,
-      squished INTEGER NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    )`);
-    await pool.query('CREATE INDEX IF NOT EXISTS dragon_scores_score_idx ON dragon_scores (score DESC)');
+    await store.init();
     dbReady = true;
-    console.log('Leaderboard ready');
+    console.log('Leaderboard ready (' + (DB_URL ? 'Postgres' : 'Key Value') + ')');
   } catch (e) {
-    console.error('Database setup failed:', e.message);
+    console.error('Leaderboard setup failed:', e.message);
     setTimeout(initDb, 10000);
   }
 }
@@ -97,10 +146,7 @@ const server = http.createServer(async (req, res) => {
       if (!dbReady) return send(res, 503, { error: 'Leaderboard is not available right now.' });
 
       if (req.method === 'GET') {
-        const { rows } = await pool.query(
-          'SELECT id, name, score, distance, squished FROM dragon_scores ORDER BY score DESC, created_at ASC LIMIT 10'
-        );
-        return send(res, 200, rows);
+        return send(res, 200, await store.top());
       }
 
       if (req.method === 'POST') {
@@ -112,12 +158,12 @@ const server = http.createServer(async (req, res) => {
         const score = Number(body.score), distance = Number(body.distance), squished = Number(body.squished);
         if (!name) return send(res, 400, { error: 'Enter a name first.' });
         if (!Number.isInteger(score) || score < 0 || score > 5000000) return send(res, 400, { error: 'That score does not look right.' });
-        const { rows } = await pool.query(
-          'INSERT INTO dragon_scores (name, score, distance, squished) VALUES ($1, $2, $3, $4) RETURNING id',
-          [name, score, Number.isFinite(distance) ? Math.max(0, distance) : 0, Number.isInteger(squished) ? Math.max(0, squished) : 0]
-        );
-        const rank = await pool.query('SELECT COUNT(*)::int + 1 AS rank FROM dragon_scores WHERE score > $1', [score]);
-        return send(res, 201, { id: rows[0].id, rank: rank.rows[0].rank });
+        const saved = await store.add({
+          name, score,
+          distance: Number.isFinite(distance) ? Math.max(0, distance) : 0,
+          squished: Number.isInteger(squished) ? Math.max(0, squished) : 0,
+        });
+        return send(res, 201, saved);
       }
       return send(res, 405, { error: 'Method not allowed' });
     }
