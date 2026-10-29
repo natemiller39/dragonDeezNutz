@@ -116,7 +116,7 @@ canvas{display:block;width:100%;height:100%;cursor:pointer}
     <h1 id="cardTitle">Dragon Deez Nuts</h1>
     <p id="cardText">Tap once to lock the angle, tap again to lock the power. In the air, hold to fire your jetpack. Run it dry and it needs to cool down.</p>
     <p id="cardHelp">Every critter you squish goes in the sack, and the sack grows. Land on critters to squish them: small 50, medium 100, big 200. Chain squishes without touching the ground for bigger combos. Bounce 3 times without hitting anything to charge Turbo.</p>
-    <p id="cardLegend">Springs, boom barrels and balloons send you farther. Cactuses, tar pits and vultures end the run, and they pile up the farther you fly.</p>
+    <p id="cardLegend">Springs, boom barrels and balloons send you farther. Fly through three lands: Scorched Desert, Frozen Wastes and Molten Core. Each has its own traps, and they pile up the farther you go.</p>
     <span class="record" id="record" hidden>New record!</span>
     <form class="post" id="postForm" hidden>
       <input id="pname" maxlength="20" placeholder="Your name" autocomplete="nickname" aria-label="Your name for the leaderboard">
@@ -160,11 +160,12 @@ window.addEventListener('resize', resize); resize();
 // ---------- state ----------
 let state='title', t=0, angle=45, power=0.5, aimDir=1, powDir=1;
 let sackLoad=0, sackBugs=[];
+let runZone=0;
 let crit=[], pops=[], nextCrit=600, squishPts=0, squishN=0, combo=0;
 let h, items, parts, camX, camY, nextSpawn, fuel=1, hot=false, jetHold=false, jetting=false, idleT=0, banner, bounces=0, charged=false, turboT=0;
 function reset(){
   h={x:40,y:60,vx:0,vy:0,rot:0,rolling:false,stuck:null,air:true};
-  bounces=0; charged=false; turboT=0; renderMeter();
+  bounces=0; charged=false; turboT=0; runZone=0; renderMeter();
   items=[]; parts=[]; camX=-120; camY=0; nextSpawn=900; fuel=1; hot=false; jetHold=false; banner=null;
   angle=20; power=0.1; aimDir=1; powDir=1; renderPuffs(); crit=[]; pops=[]; nextCrit=600; squishPts=0; squishN=0; combo=0; sackLoad=0; sackBugs=[]; renderScore();
 }
@@ -272,13 +273,42 @@ function fire(){
 // ---------- world ----------
 const TYPES=[
   {k:'spring',w:28,good:1},{k:'barrel',w:16,good:1},{k:'balloon',w:16,good:1},
-  {k:'cactus',w:18,good:0},{k:'tar',w:14,good:0},{k:'vulture',w:13,good:0}
+  {k:'cactus',w:18,good:0},{k:'tar',w:14,good:0},{k:'vulture',w:13,good:0},
+  {k:'drift',w:0,good:0},{k:'geyser',w:0,good:0}
 ];
+// Three lands, each with its own look and dangers. Boundaries are in world units (20 per meter).
+const ZONES=[
+  {name:'SCORCHED DESERT', from:0,     sky:['#2a1b3d','#8a3e6b','#f08a4b'], far:'#6b3a5e', near:'#a4506a', ground:'#e7b46a', edge:'#c98d48', speck:'#8a5a2b', sun:'#ffd45c', label:'#ffd45c'},
+  {name:'FROZEN WASTES',   from:6000,  sky:['#16213f','#3d5a8a','#a9d3ee'], far:'#47628f', near:'#7d9cc4', ground:'#eef5fb', edge:'#a9c6e0', speck:'#5a78a0', sun:'#f4f8ff', label:'#a9e1ff'},
+  {name:'MOLTEN CORE',     from:14000, sky:['#14070c','#4a1018','#c2401f'], far:'#2a1016', near:'#4a1a1a', ground:'#3a2a2e', edge:'#ff6a2a', speck:'#ff6a2a', sun:'#ff8a3d', label:'#ff8a3d'},
+];
+function zoneAt(x){ let z=0; for(let i=0;i<ZONES.length;i++) if(x>=ZONES[i].from) z=i; return z; }
+function hexMix(a,b,f){
+  const pa=parseInt(a.slice(1),16), pb=parseInt(b.slice(1),16);
+  const c=[16,8,0].map(sh=>Math.round(((pa>>sh)&255)*(1-f)+((pb>>sh)&255)*f));
+  return '#'+c.map(v=>v.toString(16).padStart(2,'0')).join('');
+}
+// The look at a spot, blended across 1,200 units around each border.
+function lookAt(x){
+  let a=ZONES[zoneAt(x)], b=a, f=0;
+  for(let i=1;i<ZONES.length;i++){ const B=ZONES[i].from; if(Math.abs(x-B)<600){ a=ZONES[i-1]; b=ZONES[i]; f=(x-(B-600))/1200; } }
+  const mix=k=>hexMix(a[k],b[k],f);
+  return {sky:[0,1,2].map(i=>hexMix(a.sky[i],b.sky[i],f)), far:mix('far'), near:mix('near'), ground:mix('ground'), edge:mix('edge'), speck:mix('speck'), sun:mix('sun')};
+}
+// How strongly each land shows at a spot (used for snow and embers).
+function zoneWeight(x,i){
+  const zf=ZONES[i].from, zt=ZONES[i+1]?ZONES[i+1].from:Infinity;
+  const inn=Math.min(1,Math.max(0,(x-(zf-600))/1200)), out=Math.min(1,Math.max(0,((zt+600)-x)/1200));
+  return Math.min(inn,out);
+}
 // How far into the run we are: 0 near the cannon, 1 at about 1,000 m and beyond.
 function danger(x){ return Math.min(1, Math.max(0, (x-1800)/18000)); }
 function weightOf(t,x){
   const d=danger(x);
+  const z=zoneAt(x);
   if(t.k==='vulture') return x<5000 ? 0 : 5+15*d;   // vultures show up after ~250 m
+  if(t.k==='drift')  return z===1 ? 14+8*d : 0;      // snowdrifts only in the Frozen Wastes
+  if(t.k==='geyser') return z===2 ? 15+8*d : 0;      // fire geysers only in the Molten Core
   return t.good ? t.w*(1-0.3*d) : t.w*(1+1.2*d);    // fewer boosts, more traps the farther you go
 }
 function pick(x){
@@ -317,13 +347,14 @@ function spawn(){
   const viewR = camX + W/s + 500;
   while(nextSpawn < viewR){
     const k = pick(nextSpawn), d = danger(nextSpawn);
-    const it={k,x:nextSpawn,used:false,y:0,ph:Math.random()*6};
+    const it={k,x:nextSpawn,used:false,y:0,ph:Math.random()*6,z:zoneAt(nextSpawn)};
     if(k==='balloon') it.y = 160 + Math.random()*420;
     if(k==='vulture'){ it.y = it.cy = 230 + Math.random()*380; it.bx = it.x; }
     items.push(it);
     // Deeper in, traps sometimes come in pairs.
     if(nextSpawn>4000 && Math.random()<0.35*d){
-      items.push({k:Math.random()<.5?'cactus':'tar', x:nextSpawn+150+Math.random()*90, used:false, y:0, ph:Math.random()*6});
+      const x2=nextSpawn+150+Math.random()*90;
+      items.push({k:Math.random()<.5?'cactus':'tar', x:x2, used:false, y:0, ph:Math.random()*6, z:zoneAt(x2)});
       nextSpawn += 240;
     }
     nextSpawn += (320 + Math.random()*620 + Math.min(nextSpawn*0.02, 400)) * (1-0.25*d);
@@ -334,7 +365,7 @@ function burst(x,y,c,n,spd){
   for(let i=0;i<n;i++){const a=Math.random()*Math.PI*2,v=Math.random()*spd;
     parts.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v,life:.5+Math.random()*.5,c,r:2+Math.random()*4});}
 }
-function flash(text,color){ banner={text,color,life:1}; }
+function flash(text,color,life=1){ if(banner && banner.big && life<=1 && banner.life>1) return; banner={text,color,life,big:life>1}; }
 
 function hit(it){
   const dx=h.x-it.x;
@@ -345,16 +376,23 @@ function hit(it){
     case 'tar':    return Math.abs(dx)<52 && h.y-R<6;
     case 'balloon':{const dy=h.y-it.y; return dx*dx+dy*dy<(R+30)*(R+30);}
     case 'vulture':{const dy=h.y-it.cy; return dx*dx+dy*dy<(R+24)*(R+24);}
+    case 'drift':  return Math.abs(dx)<46 && h.y-R<34;
+    case 'geyser': return geyserOn(it) && Math.abs(dx)<24 && h.y-R<300;
   }
 }
+// Fire geysers erupt on a cycle: quiet, then a warning puff, then a tall column of fire.
+function geyserPhase(it){ return ((t+it.ph)%2.8)/2.8; }
+function geyserOn(it){ const p=geyserPhase(it); return p>0.62 && p<0.95; }
 function trigger(it){
+  if(it.k==='geyser'){ h.stuck=it; h.vx=0; h.vy=0; burst(h.x,h.y,'#ff6a2a',22,320); burst(h.x,h.y,'#ffd45c',14,260); flash('ROASTED!','#ff6a2a'); shake=Math.max(shake,0.3); it.used=true; return; }
+  if(it.k==='drift'){ it.used=true; h.vx*=0.45; h.vy=Math.max(h.vy*0.3,0); burst(h.x,h.y-10,'#ffffff',22,240); flash('SNOWDRIFT!','#a9e1ff'); return; }
   it.used=true; bounces=0; renderMeter();
   if(it.k==='spring'){ h.vy=Math.max(950, h.vx*0.75); h.vx+=120; h.y=44+R; h.rolling=false; burst(it.x,40,'#6fd66b',12,220); flash('SPRING!','#6fd66b'); }
   if(it.k==='barrel'){ h.vx+=520; h.vy=Math.max(h.vy,1050); shake=0.3; h.rolling=false; burst(it.x,30,'#ffd45c',30,480); burst(it.x,30,'#ff4f5a',20,380); flash('KABOOM!','#ffd45c'); }
   if(it.k==='balloon'){ h.vy=Math.max(h.vy,780); h.vx+=60; burst(it.x,it.y,'#5ec8ff',14,260); flash('POP!','#5ec8ff'); }
-  if(it.k==='cactus'){ h.stuck=it; h.vx=0; h.vy=0; burst(h.x,h.y,'#3f8f4a',10,160); flash('OUCH!','#ff4f5a'); }
-  if(it.k==='vulture'){ h.stuck=it; it.carry=true; h.vx=0; h.vy=0; burst(h.x,h.y,'#3b3046',14,200); flash('SNATCHED!','#ff4f5a'); shake=Math.max(shake,0.2); }
-  if(it.k==='tar'){ h.stuck=it; h.vx=0; h.vy=0; h.y=R-6; burst(h.x,4,'#1c1424',12,140); flash('STUCK!','#ff4f5a'); }
+  if(it.k==='cactus'){ h.stuck=it; h.vx=0; h.vy=0; burst(h.x,h.y,['#3f8f4a','#bfe6ff','#1a1014'][it.z],10,160); flash(['OUCH!','IMPALED!','SKEWERED!'][it.z],'#ff4f5a'); }
+  if(it.k==='vulture'){ h.stuck=it; it.carry=true; h.vx=0; h.vy=0; burst(h.x,h.y,VP[it.z][0],14,200); flash(['SNATCHED!','SNATCHED!','GRABBED!'][it.z],'#ff4f5a'); shake=Math.max(shake,0.2); }
+  if(it.k==='tar'){ h.stuck=it; h.vx=0; h.vy=0; h.y=R-6; burst(h.x,4,['#1c1424','#1d3557','#ff6a2a'][it.z],12,140); flash(['STUCK!','CREVASSE!','TOO HOT!'][it.z],'#ff4f5a'); }
 }
 
 function countBounce(){
@@ -433,6 +471,7 @@ function update(dt){
   pops=pops.filter(p=>p.life>0);
   for(const p of parts){ p.vy-=900*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.life-=dt; }
   parts=parts.filter(p=>p.life>0);
+  if(state==='fly'){ const z=zoneAt(h.x); if(z>runZone){ runZone=z; flash('LEVEL '+(z+1)+': '+ZONES[z].name, ZONES[z].label, 2.2); } }
   if(banner){ banner.life-=dt*0.9; if(banner.life<=0) banner=null; }
 }
 
@@ -440,7 +479,11 @@ function finish(){
   state='done'; turboT=0; renderMeter();
   const d=Math.max(0,h.x/PX_PER_M), sc=curScore(), rec = sc>best;
   if(rec){ best=sc; try{localStorage.setItem('hh-best-pts',String(best));}catch(e){} bestEl.textContent=best+' pts'; }
-  const how = h.stuck ? ({cactus:'Stopped by a cactus.',tar:'Stuck in a tar pit.',vulture:'Snatched by a vulture.'}[h.stuck.k]) : 'Rolled to a stop.';
+  const HOW={cactus:['Stopped by a cactus.','Impaled on ice spikes.','Skewered on obsidian spikes.'],
+             tar:['Stuck in a tar pit.','Fell into a crevasse.','Melted in a lava pool.'],
+             vulture:['Snatched by a vulture.','Snatched by a snow hawk.','Grabbed by a fire bat.'],
+             geyser:['','','Roasted by a fire geyser.']};
+  const how = (h.stuck ? HOW[h.stuck.k][h.stuck.z||0] : 'Rolled to a stop.') + ' Reached the ' + ZONES[zoneAt(h.x)].name.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()) + '.';
   const quips = rec ? ['Your league bows down.','The group chat is shook.','Somebody screenshot this.']
     : ['Your league saw that.','The group chat has questions.','Somebody is laughing at you.','Weak. Try again.'];
   const fi=nextFace(), img=$('cardFace');
@@ -455,17 +498,18 @@ const gy = () => H*0.64;
 const SX = x => (x-camX)*s;
 const SY = y => gy() - (y-camY)*s;
 
+let LOOK=lookAt(0);
 function drawSky(){
   const g=ctx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,'#2a1b3d'); g.addColorStop(.55,'#8a3e6b'); g.addColorStop(1,'#f08a4b');
+  g.addColorStop(0,LOOK.sky[0]); g.addColorStop(.55,LOOK.sky[1]); g.addColorStop(1,LOOK.sky[2]);
   ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
   // stars
   ctx.fillStyle='rgba(255,246,232,.7)';
   for(let i=0;i<40;i++){const x=((i*137.5 - camX*s*0.02)%W+W)%W, y=(i*61%Math.round(H*0.4)); ctx.fillRect(x,y+camY*s*0.02,1.5,1.5);}
   // sun
   const sx=W*0.72, sy=gy()-H*0.18+camY*s*0.08;
-  ctx.fillStyle='#ffd45c'; ctx.beginPath(); ctx.arc(sx,sy,Math.min(W,H)*0.11,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='rgba(255,212,92,.18)'; ctx.beginPath(); ctx.arc(sx,sy,Math.min(W,H)*0.17,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=LOOK.sun; ctx.beginPath(); ctx.arc(sx,sy,Math.min(W,H)*0.11,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha=.18; ctx.beginPath(); ctx.arc(sx,sy,Math.min(W,H)*0.17,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1;
 }
 function mesas(par,color,hgt,seed){
   ctx.fillStyle=color; const base=gy()+camY*s*par;
@@ -479,8 +523,8 @@ function mesas(par,color,hgt,seed){
 }
 function drawGround(){
   const y=SY(0);
-  ctx.fillStyle='#e7b46a'; ctx.fillRect(0,y,W,H-y);
-  ctx.fillStyle='#c98d48'; ctx.fillRect(0,y,W,5*s);
+  ctx.fillStyle=LOOK.ground; ctx.fillRect(0,y,W,H-y);
+  ctx.fillStyle=LOOK.edge; ctx.fillRect(0,y,W,5*s);
   // distance posts every 50 m
   ctx.font=`${Math.round(12*s+2)}px Bungee, Impact, sans-serif`; ctx.textAlign='center';
   const step=50*PX_PER_M, first=Math.floor(camX/step)*step;
@@ -491,8 +535,20 @@ function drawGround(){
     ctx.fillStyle='#8a5a2b'; ctx.fillText((x/PX_PER_M)+'m',px,y-29*s);
   }
   // pebbles
-  ctx.fillStyle='rgba(138,90,43,.35)';
+  ctx.fillStyle=LOOK.speck; ctx.globalAlpha=.35;
   for(let i=Math.floor(camX/90); i<(camX+W/s)/90+1; i++){ const k=Math.abs(Math.sin(i*7.1)); ctx.fillRect(SX(i*90+k*60), y+(12+k*40)*s, 6*s, 3*s); }
+  ctx.globalAlpha=1;
+}
+// Falling snow in the Frozen Wastes, rising embers in the Molten Core.
+function drawWeather(){
+  const xc=camX+(W*0.5)/s, snow=zoneWeight(xc,1), ember=zoneWeight(xc,2);
+  if(snow>0){ ctx.fillStyle='#ffffff'; ctx.globalAlpha=0.8*snow;
+    for(let i=0;i<60;i++){ const px=((i*97.7 - camX*s*0.6 + Math.sin(t+i)*20)%W+W)%W, py=((i*53.3 + t*(40+i%5*12))%H);
+      ctx.beginPath(); ctx.arc(px,py,1.5+(i%3),0,Math.PI*2); ctx.fill(); } }
+  if(ember>0){ ctx.globalAlpha=ember;
+    for(let i=0;i<40;i++){ const px=((i*131.3 - camX*s*0.5 + Math.sin(t*2+i)*14)%W+W)%W, py=H-((i*71.1 + t*(50+i%4*20))%H);
+      ctx.fillStyle=i%2?'#ffd45c':'#ff6a2a'; ctx.fillRect(px,py,2.5,2.5); } }
+  ctx.globalAlpha=1;
 }
 function drawCannon(){
   const bx=SX(0), by=SY(52), a=angle*Math.PI/180;
@@ -590,6 +646,7 @@ function drawCrit(c){
     ctx.fillStyle='#fff6e8'; ctx.beginPath(); ctx.arc(ex+d*2*k,y-23*k,2.6*k,0,Math.PI*2); ctx.fill();
     ctx.fillStyle='#241b2e'; ctx.beginPath(); ctx.arc(ex+d*2.8*k,y-23*k,1.2*k,0,Math.PI*2); ctx.fill(); }
 }
+const VP=[['#3b3046','#fff6e8','#e9a3a0','#ffd45c'],['#e9f1f8','#ffffff','#9fb7d0','#ffb347'],['#2a0f14','#ff6a2a','#c2401f','#ffd45c']];
 function drawItem(it){
   const x=SX(it.x), y=SY(it.y);
   if(x<-120||x>W+120) return;
@@ -613,7 +670,37 @@ function drawItem(it){
     ctx.fillStyle='#5ec8ff'; ctx.beginPath(); ctx.ellipse(x,y+bob,26*s,32*s,0,0,Math.PI*2); ctx.fill();
     ctx.fillStyle='rgba(255,255,255,.5)'; ctx.beginPath(); ctx.ellipse(x-9*s,y-12*s+bob,6*s,10*s,-.4,0,Math.PI*2); ctx.fill();
   }
-  if(it.k==='cactus'){
+  const z=it.z||0;
+  if(it.k==='cactus' && z>0){
+    // ice spikes / obsidian spikes
+    const col = z===1 ? ['#bfe6ff','#e9f6ff','#7fb6dc'] : ['#1a1014','#3a2228','#ff6a2a'];
+    for(const [ox,hh,ww] of [[-16,62,14],[0,94,16],[15,70,13]]){
+      ctx.fillStyle=col[0]; ctx.beginPath(); ctx.moveTo(x+(ox-ww)*s,y); ctx.lineTo(x+ox*s,y-hh*s); ctx.lineTo(x+(ox+ww)*s,y); ctx.closePath(); ctx.fill();
+      ctx.fillStyle=col[1]; ctx.beginPath(); ctx.moveTo(x+(ox-ww*0.3)*s,y); ctx.lineTo(x+ox*s,y-hh*s); ctx.lineTo(x+(ox+ww*0.2)*s,y); ctx.closePath(); ctx.fill();
+      if(z===2){ ctx.strokeStyle=col[2]; ctx.lineWidth=1.5*s; ctx.globalAlpha=0.6+0.4*Math.sin(t*4+ox); ctx.beginPath(); ctx.moveTo(x+(ox-ww*0.5)*s,y-hh*0.4*s); ctx.lineTo(x+ox*s,y-hh*0.7*s); ctx.stroke(); ctx.globalAlpha=1; }
+    }
+  }
+  if(it.k==='drift'){
+    if(it.used){ ctx.fillStyle='#ffffff'; ctx.beginPath(); ctx.ellipse(x,y,50*s,8*s,0,Math.PI,0); ctx.fill(); }
+    else {
+      ctx.fillStyle='#ffffff'; ctx.beginPath(); ctx.ellipse(x,y,52*s,30*s,0,Math.PI,0); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x-24*s,y,26*s,20*s,0,Math.PI,0); ctx.fill(); ctx.beginPath(); ctx.ellipse(x+26*s,y,24*s,16*s,0,Math.PI,0); ctx.fill();
+      ctx.fillStyle='#d6e6f5'; ctx.beginPath(); ctx.ellipse(x+12*s,y,34*s,12*s,0,Math.PI,0); ctx.fill();
+    }
+  }
+  if(it.k==='geyser'){
+    const ph=geyserPhase(it), on=geyserOn(it);
+    ctx.fillStyle='#1a1014'; ctx.beginPath(); ctx.moveTo(x-30*s,y); ctx.lineTo(x-12*s,y-18*s); ctx.lineTo(x+12*s,y-18*s); ctx.lineTo(x+30*s,y); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = ph>0.45 ? '#ffd45c' : '#ff6a2a'; ctx.fillRect(x-10*s,y-20*s,20*s,4*s);
+    if(ph>0.45 && !on){ ctx.fillStyle='rgba(120,100,100,.6)'; for(let i=0;i<3;i++){ ctx.beginPath(); ctx.arc(x+Math.sin(t*6+i)*6*s,y-(28+i*14+((t*40)%14))*s,(6+i*2)*s,0,Math.PI*2); ctx.fill(); } }
+    if(on){
+      const hh=(300+Math.sin(t*30)*12)*s;
+      const g=ctx.createLinearGradient(0,y,0,y-hh); g.addColorStop(0,'#ffd45c'); g.addColorStop(0.5,'#ff6a2a'); g.addColorStop(1,'rgba(194,64,31,0)');
+      ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(x-14*s,y-18*s); ctx.quadraticCurveTo(x-26*s,y-hh*0.5,x-6*s,y-hh); ctx.lineTo(x+6*s,y-hh); ctx.quadraticCurveTo(x+26*s,y-hh*0.5,x+14*s,y-18*s); ctx.closePath(); ctx.fill();
+      ctx.fillStyle='rgba(255,246,232,.75)'; ctx.fillRect(x-4*s,y-hh*0.8,8*s,hh*0.75);
+    }
+  }
+  if(it.k==='cactus' && z===0){
     ctx.fillStyle='#3f8f4a';
     ctx.beginPath(); ctx.roundRect(x-11*s,y-90*s,22*s,90*s,11*s); ctx.fill();
     ctx.beginPath(); ctx.roundRect(x-32*s,y-62*s,12*s,32*s,6*s); ctx.fill(); ctx.fillRect(x-32*s,y-38*s,24*s,10*s);
@@ -623,32 +710,46 @@ function drawItem(it){
   if(it.k==='vulture'){
     const vx=SX(it.x), vy=SY(it.cy), dir=it.carry?1:(Math.cos(t*0.7+it.ph)>=0?1:-1), flap=Math.sin(t*(it.carry?14:7)+it.ph);
     if(vx<-160||vx>W+160) return;
+    const vp=VP[z];
     ctx.save(); ctx.translate(vx,vy); ctx.scale(dir,1);
-    ctx.fillStyle='#3b3046';
+    ctx.fillStyle=vp[0];
     for(const side of [-1,1]){ ctx.beginPath(); ctx.moveTo(-6*s,-2*s); ctx.lineTo(side*-4*s-30*s,(-26*flap*side*0.5-16*flap)*s); ctx.lineTo(-38*s,(4-10*flap)*s); ctx.closePath(); ctx.fill(); }
     ctx.beginPath(); ctx.ellipse(0,0,22*s,13*s,-0.1,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#fff6e8'; ctx.beginPath(); ctx.ellipse(14*s,-8*s,8*s,5*s,0,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#e9a3a0'; ctx.beginPath(); ctx.ellipse(22*s,-16*s,6*s,8*s,0.3,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=vp[1]; ctx.beginPath(); ctx.ellipse(14*s,-8*s,8*s,5*s,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=vp[2]; ctx.beginPath(); ctx.ellipse(22*s,-16*s,6*s,8*s,0.3,0,Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.arc(30*s,-20*s,7*s,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#ffd45c'; ctx.beginPath(); ctx.moveTo(35*s,-23*s); ctx.quadraticCurveTo(46*s,-22*s,41*s,-13*s); ctx.lineTo(36*s,-17*s); ctx.closePath(); ctx.fill();
+    ctx.fillStyle=vp[3]; ctx.beginPath(); ctx.moveTo(35*s,-23*s); ctx.quadraticCurveTo(46*s,-22*s,41*s,-13*s); ctx.lineTo(36*s,-17*s); ctx.closePath(); ctx.fill();
     ctx.fillStyle='#241b2e'; ctx.beginPath(); ctx.arc(31*s,-22*s,1.8*s,0,Math.PI*2); ctx.fill();
     ctx.strokeStyle='#241b2e'; ctx.lineWidth=2*s; ctx.beginPath(); ctx.moveTo(27*s,-26*s); ctx.lineTo(34*s,-24*s); ctx.stroke();
     ctx.strokeStyle='#ffd45c'; ctx.lineWidth=3*s;
     for(const fx of [-6,6]){ ctx.beginPath(); ctx.moveTo(fx*s,10*s); ctx.lineTo(fx*s,(it.carry?24:18)*s); ctx.lineTo((fx+4)*s,(it.carry?28:22)*s); ctx.stroke(); }
     ctx.restore();
   }
-  if(it.k==='tar'){
+  if(it.k==='tar' && z===0){
     ctx.fillStyle='#1c1424'; ctx.beginPath(); ctx.ellipse(x,y+3*s,54*s,9*s,0,0,Math.PI*2); ctx.fill();
     ctx.fillStyle='#3b3046'; ctx.beginPath(); ctx.arc(x+(Math.sin(t*3+it.ph)*20)*s,y,4*s,Math.PI,0); ctx.fill();
+  }
+  if(it.k==='tar' && z===1){
+    // crevasse: a jagged crack in the ice
+    ctx.fillStyle='#1d3557'; ctx.beginPath(); ctx.moveTo(x-54*s,y); ctx.lineTo(x-30*s,y+10*s); ctx.lineTo(x-12*s,y+4*s); ctx.lineTo(x+4*s,y+14*s); ctx.lineTo(x+26*s,y+6*s); ctx.lineTo(x+54*s,y); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#a9c6e0'; for(const ex of [-40,-8,22]){ ctx.beginPath(); ctx.moveTo(x+ex*s,y); ctx.lineTo(x+(ex+5)*s,y+7*s); ctx.lineTo(x+(ex+10)*s,y); ctx.closePath(); ctx.fill(); }
+  }
+  if(it.k==='tar' && z===2){
+    // lava pool: glowing and bubbling
+    ctx.fillStyle='#c2401f'; ctx.beginPath(); ctx.ellipse(x,y+3*s,56*s,10*s,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ff6a2a'; ctx.globalAlpha=0.7+0.3*Math.sin(t*5+it.ph); ctx.beginPath(); ctx.ellipse(x,y+2*s,44*s,6*s,0,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1;
+    ctx.fillStyle='#ffd45c'; ctx.beginPath(); ctx.arc(x+(Math.sin(t*3+it.ph)*24)*s,y,4*s,Math.PI,0); ctx.fill();
   }
 }
 function draw(){
   ctx.setTransform(dpr,0,0,dpr,0,0);
   if(shake>0){ const m=shake*22; ctx.translate((Math.random()-.5)*m,(Math.random()-.5)*m); }
   drawSky();
-  mesas(0.15,'#6b3a5e',150,3);
-  mesas(0.35,'#a4506a',95,11);
+  LOOK=lookAt(camX+(W*0.5)/s);
+  mesas(0.15,LOOK.far,150,3);
+  mesas(0.35,LOOK.near,95,11);
   drawGround();
+  drawWeather();
   for(const it of items) drawItem(it);
   for(const c of crit) drawCrit(c);
   drawCannon();
@@ -661,7 +762,8 @@ function draw(){
   if(banner){
     ctx.globalAlpha=Math.min(1,banner.life*2); ctx.fillStyle=banner.color; ctx.textAlign='center';
     ctx.font=`${Math.round(30*s+6)}px Bungee, Impact, sans-serif`;
-    ctx.fillText(banner.text, W/2, H*0.3 - (1-banner.life)*30); ctx.globalAlpha=1;
+    if(banner.big){ ctx.font=`${Math.round(Math.min(26*s+6, W/(banner.text.length*0.62)))}px Bungee, Impact, sans-serif`; ctx.globalAlpha=Math.min(1,banner.life); }
+    ctx.fillText(banner.text, W/2, H*0.3 - (banner.big?0:(1-banner.life)*30)); ctx.globalAlpha=1;
   }
   // height indicator when dragon is above the screen
   if(state==='fly' && SY(h.y)<0){
