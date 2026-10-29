@@ -116,9 +116,9 @@ canvas{display:block;width:100%;height:100%;cursor:pointer}
     <img id="cardFace" class="face" alt="" hidden>
     <h1 id="cardTitle">Dragon Deez Nuts</h1>
     <p id="cardText">Tap once to lock the angle, tap again to lock the power. In the air, hold to fire your jetpack. Run it dry and it needs to cool down.</p>
-    <p id="cardHelp">Land on critters to squish them: small 50, medium 100, big 200. Chain squishes without touching the ground for bigger combos. Bounce 3 times without hitting anything to charge Turbo.</p>
+    <p id="cardHelp">Every critter you squish goes in the sack, and the sack grows. Land on critters to squish them: small 50, medium 100, big 200. Chain squishes without touching the ground for bigger combos. Bounce 3 times without hitting anything to charge Turbo.</p>
     <p class="install" id="installTip" hidden>On iPhone: tap the Share button, then <b>Add to Home Screen</b> to play full screen like an app.</p>
-    <p id="cardLegend">Springs, boom barrels and balloons send you farther. Cactuses, tar pits and vultures end the run.</p>
+    <p id="cardLegend">Springs, boom barrels and balloons send you farther. Cactuses and tar pits end the run.</p>
     <span class="record" id="record" hidden>New record!</span>
     <form class="post" id="postForm" hidden>
       <input id="pname" maxlength="20" placeholder="Your name" autocomplete="nickname" aria-label="Your name for the leaderboard">
@@ -161,13 +161,14 @@ window.addEventListener('resize', resize); resize();
 
 // ---------- state ----------
 let state='title', t=0, angle=45, power=0.5, aimDir=1, powDir=1;
+let sackLoad=0, sackBugs=[];
 let crit=[], pops=[], nextCrit=600, squishPts=0, squishN=0, combo=0;
 let h, items, parts, camX, camY, nextSpawn, fuel=1, hot=false, jetHold=false, jetting=false, idleT=0, banner, bounces=0, charged=false, turboT=0;
 function reset(){
   h={x:40,y:60,vx:0,vy:0,rot:0,rolling:false,stuck:null,air:true};
   bounces=0; charged=false; turboT=0; renderMeter();
   items=[]; parts=[]; camX=-120; camY=0; nextSpawn=900; fuel=1; hot=false; jetHold=false; banner=null;
-  angle=20; power=0.1; aimDir=1; powDir=1; renderPuffs(); crit=[]; pops=[]; nextCrit=600; squishPts=0; squishN=0; combo=0; renderScore();
+  angle=20; power=0.1; aimDir=1; powDir=1; renderPuffs(); crit=[]; pops=[]; nextCrit=600; squishPts=0; squishN=0; combo=0; sackLoad=0; sackBugs=[]; renderScore();
 }
 reset();
 
@@ -272,7 +273,7 @@ function fire(){
 // ---------- world ----------
 const TYPES=[
   {k:'spring',w:28,good:1},{k:'barrel',w:16,good:1},{k:'balloon',w:16,good:1},
-  {k:'cactus',w:18,good:0},{k:'tar',w:14,good:0},{k:'vulture',w:13,good:0}
+  {k:'cactus',w:18,good:0},{k:'tar',w:14,good:0}
 ];
 function pick(onlyGood){
   const pool=TYPES.filter(t=>!onlyGood||t.good); let tot=pool.reduce((a,b)=>a+b.w,0), r=Math.random()*tot;
@@ -299,7 +300,7 @@ function squish(c,stomp){
   let pts;
   if(stomp){ combo++; pts=c.pts*combo; h.vy=Math.max(-h.vy*0.55,560+c.sz*90); h.air=true; shake=Math.max(shake,0.1); }
   else pts=25;
-  squishPts+=pts; squishN++;
+  squishPts+=pts; squishN++; sackLoad+=c.sz; sackBugs.push(c.col); if(sackBugs.length>7) sackBugs.shift();
   pops.push({x:c.x,y:30+c.sz*16,text:(stomp&&combo>1?'x'+combo+' ':'')+'+'+pts,life:1.1});
   burst(c.x,6,c.col[0],10*c.sz,170*c.sz); if(c.sz>2) flash('BIG SQUISH!','#ff8a3d');
   if(stomp&&combo>=3&&c.sz<=2) flash('SQUISH COMBO x'+combo+'!','#9b6bc4');
@@ -311,7 +312,6 @@ function spawn(){
     const k = pick(nextSpawn<1800);
     const it={k,x:nextSpawn,used:false,y:0,ph:Math.random()*6};
     if(k==='balloon') it.y = 160 + Math.random()*420;
-    if(k==='vulture'){ it.y = it.cy = 230 + Math.random()*380; it.bx = it.x; }
     items.push(it);
     nextSpawn += 320 + Math.random()*620 + Math.min(nextSpawn*0.02, 400);
   }
@@ -331,7 +331,6 @@ function hit(it){
     case 'cactus': return Math.abs(dx)<20 && h.y-R<92;
     case 'tar':    return Math.abs(dx)<52 && h.y-R<6;
     case 'balloon':{const dy=h.y-it.y; return dx*dx+dy*dy<(R+30)*(R+30);}
-    case 'vulture':{const dy=h.y-it.cy; return dx*dx+dy*dy<(R+24)*(R+24);}
   }
 }
 function trigger(it){
@@ -340,7 +339,6 @@ function trigger(it){
   if(it.k==='barrel'){ h.vx+=520; h.vy=Math.max(h.vy,1050); shake=0.3; h.rolling=false; burst(it.x,30,'#ffd45c',30,480); burst(it.x,30,'#ff4f5a',20,380); flash('KABOOM!','#ffd45c'); }
   if(it.k==='balloon'){ h.vy=Math.max(h.vy,780); h.vx+=60; burst(it.x,it.y,'#5ec8ff',14,260); flash('POP!','#5ec8ff'); }
   if(it.k==='cactus'){ h.stuck=it; h.vx=0; h.vy=0; burst(h.x,h.y,'#3f8f4a',10,160); flash('OUCH!','#ff4f5a'); }
-  if(it.k==='vulture'){ h.stuck=it; it.carry=true; h.vx=0; h.vy=0; burst(h.x,h.y,'#3b3046',14,200); flash('SNATCHED!','#ff4f5a'); shake=Math.max(shake,0.2); }
   if(it.k==='tar'){ h.stuck=it; h.vx=0; h.vy=0; h.y=R-6; burst(h.x,4,'#1c1424',12,140); flash('STUCK!','#ff4f5a'); }
 }
 
@@ -385,7 +383,7 @@ function update(dt){
     const stopped = h.stuck || (h.rolling && h.vx<4);
     stopTimer = stopped ? stopTimer+dt : 0;
     if(charged && !h.stuck && stopped && stopTimer<dt*1.5) flash('HIT TURBO!','#ff4f5a');
-    if(stopTimer > (charged && !h.stuck ? 3 : (h.stuck && h.stuck.k==='vulture' ? 1.6 : 0.9))) finish();
+    if(stopTimer > (charged && !h.stuck ? 3 : 0.9)) finish();
     jetting = jetHold && !hot && fuel>0 && !h.stuck;
     if(jetting){
       fuel-=dt/BURN; idleT=0;
@@ -407,11 +405,6 @@ function update(dt){
   const ty = Math.max(0, h.y - topRoom);
   camY += (ty-camY)*Math.min(1,dt*6);
   spawn(); spawnCrit();
-  for(const it of items){
-    if(it.k!=='vulture') continue;
-    if(it.carry){ it.bx+=140*dt; it.x=it.bx; it.cy+=170*dt; h.x=it.x; h.y=it.cy-34; continue; }
-    it.x = it.bx + Math.sin(t*0.7+it.ph)*90; it.cy = it.y + Math.sin(t*2.2+it.ph)*12;
-  }
   for(const c of crit){
     if(c.sq){ c.sqT+=dt; continue; }
     c.x+=c.dir*c.spd*dt; if(Math.abs(c.x-c.home)>70*c.sz) c.dir=Math.sign(c.home-c.x);
@@ -427,7 +420,7 @@ function finish(){
   state='done'; turboT=0; renderMeter();
   const d=Math.max(0,h.x/PX_PER_M), sc=curScore(), rec = sc>best;
   if(rec){ best=sc; try{localStorage.setItem('hh-best-pts',String(best));}catch(e){} bestEl.textContent=best+' pts'; }
-  const how = h.stuck ? ({cactus:'Stopped by a cactus.',tar:'Stuck in a tar pit.',vulture:'Snatched by a vulture.'}[h.stuck.k]) : 'Rolled to a stop.';
+  const how = h.stuck ? (h.stuck.k==='cactus'?'Stopped by a cactus.':'Stuck in a tar pit.') : 'Rolled to a stop.';
   const quips = rec ? ['Your league bows down.','The group chat is shook.','Somebody screenshot this.']
     : ['Your league saw that.','The group chat has questions.','Somebody is laughing at you.','Weak. Try again.'];
   const fi=nextFace(), img=$('cardFace');
@@ -520,7 +513,9 @@ function drawHamster(x,y,rot,sc,local){
   ctx.fillStyle='#3b3046'; ctx.fillRect(-32*k,6*k,10*k,5*k);
   if(jetting && !local){ ctx.fillStyle='#ffd45c'; ctx.beginPath(); ctx.moveTo(-33*k,11*k); ctx.lineTo(-27*k,(26+Math.random()*8)*k); ctx.lineTo(-21*k,11*k); ctx.fill();
     ctx.fillStyle='#fff6e8'; ctx.beginPath(); ctx.moveTo(-30*k,11*k); ctx.lineTo(-27*k,19*k); ctx.lineTo(-24*k,11*k); ctx.fill(); }
-  // rope and withered sack
+  // rope and withered sack (grows with every squished bug)
+  const sackSc=1+Math.min(sackLoad,30)*0.06, wob=1+Math.sin(t*9)*0.025*Math.min(sackLoad,10)/10;
+  ctx.save(); ctx.translate(-4*k,25*k); ctx.scale(sackSc*wob,sackSc/wob); ctx.translate(4*k,-25*k);
   ctx.strokeStyle='#8a5a2b'; ctx.lineWidth=2*k; ctx.beginPath(); ctx.moveTo(-2*k,14*k); ctx.lineTo(-5*k,26*k); ctx.stroke();
   ctx.fillStyle='#8f6a43'; ctx.beginPath(); ctx.moveTo(-9*k,26*k);
   ctx.bezierCurveTo(-19*k,34*k,-17*k,52*k,-6*k,51*k); ctx.bezierCurveTo(4*k,50*k,8*k,38*k,1*k,26*k); ctx.closePath(); ctx.fill();
@@ -530,6 +525,16 @@ function drawHamster(x,y,rot,sc,local){
   crease(-12,33,-7,37,-2,33); crease(-14,40,-8,44,-1,40); crease(-9,47,-4,46,2,43); crease(-5,29,-7,34,-5,39); crease(-1,31,1,35,3,33);
   ctx.lineWidth=2*k; ctx.beginPath(); ctx.moveTo(-10*k,27*k); ctx.lineTo(2*k,27*k); ctx.stroke();
   E(-8,23,2.8,3.2,'#7d5126'); E(-8,20.5,3.3,1.8,'#4a3018'); E(-1,22.5,2.6,3,'#7d5126'); E(-1,20,3.1,1.7,'#4a3018');
+  // squished bugs poking out of the top
+  sackBugs.forEach((col,i)=>{
+    const bx=-11+i*2.2, by=24-(i%2)*1.6, wig=Math.sin(t*16+i*1.7);
+    ctx.strokeStyle='#241b2e'; ctx.lineWidth=0.7*k;
+    ctx.beginPath(); ctx.moveTo((bx-1.5)*k,by*k); ctx.lineTo((bx-2.5+wig*0.6)*k,(by-3)*k); ctx.moveTo((bx+1.5)*k,by*k); ctx.lineTo((bx+2.5-wig*0.6)*k,(by-3)*k); ctx.stroke();
+    E(bx,by,2.4,1.9,col[0]);
+    ctx.beginPath(); ctx.moveTo(bx*k,(by-1.5)*k); ctx.lineTo((bx+wig*0.4)*k,(by-4.2)*k); ctx.stroke();
+    E(bx+wig*0.4,by-4.6,0.9,0.9,'#fff6e8');
+  });
+  ctx.restore();
   // back spikes and horns
   P([-20,-4,-30,-8,-21,4],'#ff4f5a'); P([-16,-14,-26,-22,-13,-6],'#ff4f5a'); P([-8,-20,-12,-31,-2,-20],'#ff4f5a');
   P([-2,-18,-6,-34,4,-19],'#fff1dc'); P([6,-17,9,-32,12,-14],'#fff1dc');
@@ -594,23 +599,6 @@ function drawItem(it){
     ctx.beginPath(); ctx.roundRect(x-32*s,y-62*s,12*s,32*s,6*s); ctx.fill(); ctx.fillRect(x-32*s,y-38*s,24*s,10*s);
     ctx.beginPath(); ctx.roundRect(x+20*s,y-74*s,12*s,30*s,6*s); ctx.fill(); ctx.fillRect(x+8*s,y-52*s,24*s,10*s);
     ctx.fillStyle='#2b6634'; for(let i=0;i<5;i++) ctx.fillRect(x-1*s,y-(80-i*16)*s,2*s,6*s);
-  }
-  if(it.k==='vulture'){
-    const vx=SX(it.x), vy=SY(it.cy), dir=it.carry?1:(Math.cos(t*0.7+it.ph)>=0?1:-1), flap=Math.sin(t*(it.carry?14:7)+it.ph);
-    if(vx<-160||vx>W+160) return;
-    ctx.save(); ctx.translate(vx,vy); ctx.scale(dir,1);
-    ctx.fillStyle='#3b3046';
-    for(const side of [-1,1]){ ctx.beginPath(); ctx.moveTo(-6*s,-2*s); ctx.lineTo(side*-4*s-30*s,(-26*flap*side*0.5-16*flap)*s); ctx.lineTo(-38*s,(4-10*flap)*s); ctx.closePath(); ctx.fill(); }
-    ctx.beginPath(); ctx.ellipse(0,0,22*s,13*s,-0.1,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#fff6e8'; ctx.beginPath(); ctx.ellipse(14*s,-8*s,8*s,5*s,0,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#e9a3a0'; ctx.beginPath(); ctx.ellipse(22*s,-16*s,6*s,8*s,0.3,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(30*s,-20*s,7*s,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#ffd45c'; ctx.beginPath(); ctx.moveTo(35*s,-23*s); ctx.quadraticCurveTo(46*s,-22*s,41*s,-13*s); ctx.lineTo(36*s,-17*s); ctx.closePath(); ctx.fill();
-    ctx.fillStyle='#241b2e'; ctx.beginPath(); ctx.arc(31*s,-22*s,1.8*s,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle='#241b2e'; ctx.lineWidth=2*s; ctx.beginPath(); ctx.moveTo(27*s,-26*s); ctx.lineTo(34*s,-24*s); ctx.stroke();
-    ctx.strokeStyle='#ffd45c'; ctx.lineWidth=3*s;
-    for(const fx of [-6,6]){ ctx.beginPath(); ctx.moveTo(fx*s,10*s); ctx.lineTo(fx*s,(it.carry?24:18)*s); ctx.lineTo((fx+4)*s,(it.carry?28:22)*s); ctx.stroke(); }
-    ctx.restore();
   }
   if(it.k==='tar'){
     ctx.fillStyle='#1c1424'; ctx.beginPath(); ctx.ellipse(x,y+3*s,54*s,9*s,0,0,Math.PI*2); ctx.fill();
