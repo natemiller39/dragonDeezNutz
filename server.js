@@ -7,6 +7,13 @@ const { Pool } = require('pg');
 const PORT = process.env.PORT || 3000;
 const DB_URL = process.env.DATABASE_URL || '';
 const INDEX = path.join(__dirname, 'index.html');
+// Files the home-screen app needs, served as-is.
+const STATIC = {
+  '/manifest.json': 'application/manifest+json',
+  '/icon-180.png': 'image/png',
+  '/icon-192.png': 'image/png',
+  '/icon-512.png': 'image/png',
+};
 
 const pool = DB_URL
   ? new Pool({
@@ -79,6 +86,10 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
       return send(res, 200, fs.readFileSync(INDEX), 'text/html; charset=utf-8');
+    }
+    if (req.method === 'GET' && STATIC[url.pathname]) {
+      res.writeHead(200, { 'Content-Type': STATIC[url.pathname], 'Cache-Control': 'public, max-age=86400' });
+      return res.end(fs.readFileSync(path.join(__dirname, url.pathname.slice(1))));
     }
     if (url.pathname === '/healthz') return send(res, 200, { ok: true });
 
