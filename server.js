@@ -58,7 +58,13 @@ function pgStore() {
 
 function redisStore() {
   const { createClient } = require('redis');
-  const client = createClient({ url: REDIS_URL });
+  // Render's private hostnames are IPv4; pin the family and allow a slower first connect.
+  const client = createClient({ url: REDIS_URL, socket: { family: 4, connectTimeout: 15000 } });
+  try {
+    const host = new URL(REDIS_URL).hostname;
+    require('dns').lookup(host, { all: true }, (err, addrs) =>
+      console.log('Key Value host', host, err ? 'lookup failed: ' + err.code : 'resolves to ' + JSON.stringify(addrs)));
+  } catch (e) {}
   client.on('error', e => console.error('Key Value error:', e.message));
   const KEY = 'dds:scores', SEQ = 'dds:seq';
   return {
