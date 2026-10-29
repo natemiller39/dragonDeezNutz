@@ -220,7 +220,9 @@ function postMsg(t){ const m=$('postMsg'); m.textContent=t; m.hidden=!t; }
 async function offerPost(run){
   lastRun=run; myId=null; postMsg('');
   const ok=await loadBoard();
-  if(!ok || state!=='done' || lastRun!==run || run.score<=0){ $('postForm').hidden=true; return; }
+  if(state!=='done' || lastRun!==run) return;
+  if(!ok){ $('postForm').hidden=true; postMsg("The leaderboard isn't connected right now, so this score can't be posted."); return; }
+  if(run.score<=0){ $('postForm').hidden=true; return; }
   try{ $('pname').value=localStorage.getItem('hh-name')||''; }catch(e){}
   $('postBtn').disabled=false; $('postForm').hidden=false;
 }
